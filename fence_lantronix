@@ -1,0 +1,88 @@
+#!/usr/bin/python
+
+# The Following Agent Has Been Tested On:
+#
+# Lantronix SLP 16
+# SecureLinux Power Manager Version 5.3q
+
+import sys, re, pexpect, time
+sys.path.append("/usr/share/fence")
+from fencing import *
+
+def get_power_status(conn, options):
+	result = ""
+	try:
+		#The `status` command lists outlet and on/off info
+		conn.send_eol("status " + options["-s"])
+
+		#Split everything before command prompt (options["-c"])
+		#This will let us see the results of `status` in conn.before
+                conn.log_expect(options, options["-c"], int(options["-Y"]))
+		status = re.search("\son\s",conn.before.lower())
+
+		#If "on" isn't in the status, we assume the outlet is off
+		result = "off" if status is None else "on"
+	except pexpect.EOF:
+		fail(EC_CONNECTION_LOST)
+	except pexpect.TIMEOUT:
+		fail(EC_TIMED_OUT)
+
+	return result
+
+def set_power_status(conn, options):
+	try:
+		cmd = "on" if options["-o"]=="on" else "off"
+		#We aren't doing any special checks on plug before use
+		plug = options["-s"]
+		cmd_line = cmd + ' '+ plug
+		conn.send_eol(cmd_line)
+		#conn.send_eol(options["-o"])
+		conn.log_expect(options, options["-c"],int(options["-g"]))
+		#Get the machine some time between poweron and poweroff
+		#time.sleep(int(options["-g"]))
+		
+	except pexpect.EOF:
+		fail(EC_CONNECTION_LOST)
+	except pexpect.TIMEOUT:
+		fail(EC_TIMED_OUT)
+		
+def main():
+	device_opt = [  "help", "version", "agent", "quiet", "verbose", "debug",
+			"action", "ipaddr", "login", "passwd", "passwd_script",
+			"switch", "secure", "identity_file", "test", "inet4_only", "inet6_only", "ipport",
+			"power_timeout", "shell_timeout", "login_timeout", "power_wait" ]
+
+	atexit.register(atexit_handler)
+	
+	pinput = process_input(device_opt)
+	pinput["-x"] = 1
+	options = check_input(device_opt, pinput)
+
+	# Default command is SLP: 
+	if (not options.has_key("-c")):
+		options["-c"] = "SLP:\ "
+	
+	docs = { }
+	docs["shortdesc"] = "Fence agent for LANTRONIX SLP 16"
+	docs["longdesc"] = "fence_lantronix is an I/O Fencing \
+agent which can be used with LANTRONIX connected machines."
+	show_docs(options, docs)
+		
+	# Operate the fencing device
+	conn = fence_login(options)
+	result = fence_action(conn, options, set_power_status, get_power_status,None)
+
+	# Logout from system
+	try:
+		conn.send_eol("logout")
+		conn.close()
+	except exceptions.OSError:
+		pass
+	except pexpect.ExceptionPexpect:
+		pass	                                         
+
+	sys.exit(result)
+
+if __name__ == "__main__":
+	main()
+
